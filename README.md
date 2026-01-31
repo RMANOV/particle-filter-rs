@@ -6,6 +6,75 @@ All 9 numerical core functions ported to safe Rust. Parallel prediction via rayo
 
 ---
 
+## Why Rust + Python
+
+Python excels at prototyping, data wrangling, and orchestration. Rust excels at the thing Python cannot do: sustained, predictable, low-latency number crunching without a garbage collector. Combining them via PyO3 gives you both — and specifically for this library:
+
+| Dimension | Python alone (Numba JIT) | Rust via PyO3 |
+|---|---|---|
+| **First-call latency** | 2-5 s JIT warm-up per function | Zero — compiled ahead of time |
+| **GIL** | Held during Numba execution | Released (`py.detach`) — other Python threads run freely |
+| **Parallelism** | `prange` limited to simple loops | Full work-stealing (rayon) with safe shared-nothing concurrency |
+| **Memory safety** | Runtime bounds checks | Compile-time guarantees — no segfaults, no buffer overruns |
+| **Dependency weight** | `numba` + `llvmlite` (~150 MB) | Single `.so` file (~2 MB), no LLVM runtime |
+| **Reproducibility** | JIT output can vary across LLVM versions | Deterministic binary — same result on every machine |
+| **Distribution** | Requires Numba installed everywhere | `pip install *.whl` — self-contained, no compiler needed |
+
+The result: you keep writing your application logic in Python, but the inner hot loop — the one that runs thousands of times per second — executes at native speed with zero interpreter overhead.
+
+---
+
+## Core Concepts — A Practical Glossary
+
+Quick reference for the key ideas behind every function in this library.
+
+| Term | What it means | Where it appears |
+|---|---|---|
+| **Particle** | A single hypothesis about the system state — here a pair `[log_price, velocity]`. The filter maintains N particles (typically 500–2000) as a swarm of guesses. | `predict_particles`, `systematic_resample`, `estimate` |
+| **Weight** | A probability score `wᵢ ∈ [0,1]` attached to each particle. High weight = this hypothesis explains the observed data well. All weights sum to 1. | `update_weights`, `effective_sample_size`, `estimate` |
+| **Regime** | A discrete market micro-state. Three regimes model qualitatively different dynamics: **RANGE** (mean-reverting), **TREND** (directional), **PANIC** (high-volatility random walk). Each particle carries its own regime label. | `transition_regimes`, `predict_particles` |
+| **Transition matrix** | A 3×3 row-stochastic matrix governing how regimes switch over time. Entry `T[i,j]` = probability of jumping from regime `i` to regime `j`. | `transition_regimes` |
+| **Resampling** | When most weight concentrates on few particles (degeneracy), clone the winners and discard the losers. Systematic resampling does this in O(N) with low variance. | `systematic_resample` |
+| **ESS** | Effective Sample Size = `1 / Σwᵢ²`. Measures particle diversity. ESS ≈ N means all particles are equally useful; ESS ≈ 1 means one particle dominates. Resample when ESS < N/2. | `effective_sample_size` |
+| **Log-price space** | All prices are stored as `ln(price)`. This makes additive noise scale-invariant — the same filter parameters work for a $0.50 asset and a $50,000 asset. | All functions |
+| **Kalman filter** | A closed-form optimal estimator for linear-Gaussian systems. Here used as a 2D `[level, slope]` smoother that complements the particle filter's nonlinear estimation. | `kalman_update` |
+| **VWAP** | Volume-Weighted Average Price — the "fair value" consensus weighted by traded volume. The σ-bands mark statistical extremes around it. | `calculate_vwap_bands` |
+| **Momentum score** | A bounded `[-1, +1]` measure of recent directional tendency. Uses `tanh` compression so the signal saturates gracefully instead of exploding. | `calculate_momentum_score` |
+
+---
+
+## Application Domains
+
+This library is a general-purpose **regime-switching particle filter**. Anywhere you have noisy sequential observations and suspect the underlying system switches between qualitatively different behaviors, this toolkit applies:
+
+**Financial signal processing**
+- Real-time price level / trend / volatility-regime estimation
+- Order-book imbalance → velocity alignment scoring
+- Adaptive VWAP bands that respond to regime shifts
+
+**Robotics & navigation**
+- Multi-modal position tracking (GPS + IMU + wheel odometry)
+- Terrain-adaptive motion models (road vs off-road vs water)
+- Sensor fusion with regime-dependent noise profiles
+
+**IoT & anomaly detection**
+- Industrial sensor streams with normal / degraded / failure modes
+- Network traffic classification (idle / burst / attack)
+- Energy grid load-state estimation with weather-regime switching
+
+**Climate & geophysics**
+- Regime-switching weather pattern tracking
+- Seismic signal filtering with quiet / active / aftershock modes
+- Ocean current state estimation under seasonal regime changes
+
+**Biomedical**
+- EEG/ECG state estimation with wake / sleep / seizure regimes
+- Drug concentration tracking with absorption / distribution / elimination phases
+
+The 3-regime model (RANGE / TREND / PANIC) maps naturally to any domain where the system alternates between **stable**, **directional**, and **chaotic** behavior.
+
+---
+
 ## Architecture
 
 ```
