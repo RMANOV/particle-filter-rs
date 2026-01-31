@@ -1,6 +1,6 @@
 # particle-filter-rs
 
-**Rust + PyO3 particle filter core** — a compiled, zero-copy, GIL-free drop-in replacement for the Numba-JIT `numba_particle_filter.py` powering the trading bot's `ParticleFilterEntryEngine` and `ParticleFilterExitEngine`.
+**Rust + PyO3 particle filter core** — a compiled, zero-copy, GIL-free sequential Monte Carlo library for regime-switching state estimation.
 
 All 9 numerical core functions ported to safe Rust. Parallel prediction via rayon. Bit-exact parity with the Python originals (verified to `1e-10` tolerance). One-line import swap to activate.
 
@@ -9,13 +9,13 @@ All 9 numerical core functions ported to safe Rust. Parallel prediction via rayo
 ## Architecture
 
 ```
-                        Python (async trading engines)
-                 ┌──────────────┬──────────────────────┐
-                 │  EntryEngine │     ExitEngine        │
-                 │  (844 lines) │     (1240 lines)      │
-                 └──────┬───────┴──────────┬────────────┘
-                        │    import        │
-                        ▼                  ▼
+                        Python (application layer)
+                 ┌──────────────────────────────────────┐
+                 │         Your Python code              │
+                 │      import particle_filter_rs        │
+                 └──────────────────┬───────────────────┘
+                                   │
+                                   ▼
               ┌─────────────────────────────────────┐
               │      particle_filter_rs (Rust)      │
               │                                     │
@@ -85,7 +85,7 @@ Each tick of market data triggers this sequence:
       Trade Signal
 ```
 
-Auxiliary functions `kalman_update`, `calculate_vwap_bands`, and `calculate_momentum_score` run in parallel pipelines within the engines to provide supplementary signals.
+Auxiliary functions `kalman_update`, `calculate_vwap_bands`, and `calculate_momentum_score` provide supplementary signal-processing capabilities that can run alongside the core filter loop.
 
 ---
 
@@ -129,37 +129,19 @@ ALL 9 FUNCTIONS PASS PARITY TESTS
 
 ## Integration — One-Line Swap
 
-In `ParticleFilterEntryEngine.py` and `ParticleFilterExitEngine.py`:
-
 ```python
-# BEFORE (Numba JIT)
-from indicators.numba_particle_filter import (
-    numba_predict_particles,
-    numba_update_weights,
-    numba_transition_regimes,
-    numba_systematic_resample,
-    numba_effective_sample_size,
-    numba_estimate,
-    numba_kalman_update,
-    numba_calculate_vwap_bands,
-    numba_calculate_momentum_score,
-)
-
-# AFTER (Rust native)
 from particle_filter_rs import (
-    predict_particles,          # was numba_predict_particles
-    update_weights,             # was numba_update_weights
-    transition_regimes,         # was numba_transition_regimes
-    systematic_resample,        # was numba_systematic_resample
-    effective_sample_size,      # was numba_effective_sample_size
-    estimate,                   # was numba_estimate
-    kalman_update,              # was numba_kalman_update
-    calculate_vwap_bands,       # was numba_calculate_vwap_bands
-    calculate_momentum_score,   # was numba_calculate_momentum_score
+    predict_particles,
+    update_weights,
+    transition_regimes,
+    systematic_resample,
+    effective_sample_size,
+    estimate,
+    kalman_update,
+    calculate_vwap_bands,
+    calculate_momentum_score,
 )
 ```
-
-Function signatures are identical. The only change is dropping the `numba_` prefix.
 
 ---
 
@@ -461,8 +443,3 @@ maturin build --release
 pip install target/wheels/particle_filter_rs-*.whl
 ```
 
----
-
-## Source Origin
-
-Ported from [`numba_particle_filter.py`](https://github.com/RMANOV/Advanced-Trading-bot-Portfolio-Manager-/blob/main/experiment34/MASHINE_RFRMTNG/indicators/numba_particle_filter.py) (440 lines, 9 `@njit` functions) in the [Advanced-Trading-bot-Portfolio-Manager](https://github.com/RMANOV/Advanced-Trading-bot-Portfolio-Manager-) project.

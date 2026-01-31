@@ -10,7 +10,7 @@ mod update;
 mod vwap;
 
 /// Rust-accelerated particle filter core functions.
-/// Drop-in replacement for numba_particle_filter.py
+/// Regime-switching sequential Monte Carlo with PyO3 bindings.
 #[pymodule]
 fn particle_filter_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(predict::predict_particles, m)?)?;
