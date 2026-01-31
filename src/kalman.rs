@@ -1,5 +1,5 @@
 use ndarray::Array2;
-use numpy::{PyArray2, PyReadonlyArray2};
+use numpy::{PyArray2, PyReadonlyArray1, PyReadonlyArray2};
 use pyo3::prelude::*;
 
 /// 2D Kalman filter update for [level, slope] state.
@@ -73,4 +73,110 @@ pub fn kalman_update<'py>(
         slope_new,
         PyArray2::from_owned_array(py, new_p),
     ))
+}
+
+/// Internal: compute slope confidence interval (shared logic).
+fn slope_ci_inner(kf_slope: f64, kf_p_11: f64) -> (f64, f64, f64) {
+    let var_slope = f64::max(kf_p_11, 1e-12);
+    let sigma = var_slope.sqrt();
+    let ci_95 = 1.96 * sigma;
+    (kf_slope, sigma, ci_95)
+}
+
+/// Compute Kalman slope 95% confidence interval.
+///
+/// Returns: (slope, sigma, ci_95)
+#[pyfunction]
+pub fn slope_confidence_interval(kf_slope: f64, kf_p_11: f64) -> PyResult<(f64, f64, f64)> {
+    Ok(slope_ci_inner(kf_slope, kf_p_11))
+}
+
+/// Test if slope is statistically significant at 95% confidence.
+///
+/// direction: 0=bidirectional, 1=positive only, -1=negative only
+#[pyfunction]
+pub fn is_slope_significant(kf_slope: f64, kf_p_11: f64, direction: i32) -> PyResult<bool> {
+    let (slope, _sigma, ci_95) = slope_ci_inner(kf_slope, kf_p_11);
+
+    if ci_95 <= 0.0 {
+        return Ok(false);
+    }
+
+    let result = if direction == 0 {
+        slope.abs() > ci_95
+    } else if direction > 0 {
+        slope > ci_95
+    } else if direction < 0 {
+        slope < -ci_95
+    } else {
+        false
+    };
+
+    Ok(result)
+}
+
+/// Detect acceleration of Kalman slope (second derivative).
+///
+/// Returns: (acceleration, is_accelerating)
+#[pyfunction]
+#[pyo3(signature = (slopes_history, lookback=10))]
+pub fn kalman_slope_acceleration(
+    slopes_history: PyReadonlyArray1<'_, f64>,
+    lookback: usize,
+) -> PyResult<(f64, bool)> {
+    let slopes = slopes_history.as_array();
+    let n = slopes.len();
+
+    if n < lookback || lookback < 4 {
+        return Ok((0.0, false));
+    }
+
+    let start = n - lookback;
+
+    // Slope changes (first derivative)
+    let changes_len = lookback - 1;
+    let mut slope_changes = vec![0.0f64; changes_len];
+    for i in 0..changes_len {
+        slope_changes[i] = slopes[start + i + 1] - slopes[start + i];
+    }
+
+    // Acceleration: compare recent half vs older half
+    let half = changes_len / 2;
+    if half < 2 {
+        return Ok((0.0, false));
+    }
+
+    let mut recent_sum = 0.0f64;
+    for i in half..changes_len {
+        recent_sum += slope_changes[i];
+    }
+    let recent_avg = recent_sum / (changes_len - half) as f64;
+
+    let mut older_sum = 0.0f64;
+    for i in 0..half {
+        older_sum += slope_changes[i];
+    }
+    let older_avg = older_sum / half as f64;
+
+    let acceleration = recent_avg - older_avg;
+
+    // Standard deviation of slope changes
+    let mut mean_change = 0.0f64;
+    for i in 0..changes_len {
+        mean_change += slope_changes[i];
+    }
+    mean_change /= changes_len as f64;
+
+    let mut var_change = 0.0f64;
+    for i in 0..changes_len {
+        let diff = slope_changes[i] - mean_change;
+        var_change += diff * diff;
+    }
+    var_change /= (lookback - 2).max(1) as f64;
+    let std_change = (var_change + 1e-12).sqrt();
+
+    let threshold = 2.0 * std_change;
+    let is_accelerating = acceleration.abs() > threshold && acceleration.abs() > 1e-8;
+
+    Ok((acceleration, is_accelerating))
 }

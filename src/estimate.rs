@@ -37,3 +37,23 @@ pub fn estimate<'py>(
         PyArray1::from_vec(py, regime_probs.to_vec()),
     ))
 }
+
+/// Compute weighted variance of particle log-prices.
+#[pyfunction]
+pub fn particle_price_variance(
+    particles_pos: PyReadonlyArray1<'_, f64>,
+    weights: PyReadonlyArray1<'_, f64>,
+    mean_price: f64,
+) -> PyResult<f64> {
+    let pos = particles_pos.as_array();
+    let w = weights.as_array();
+    let n = pos.len();
+
+    let mut variance = 0.0f64;
+    for i in 0..n {
+        let diff = pos[i] - mean_price;
+        variance += w[i] * diff * diff;
+    }
+
+    Ok(variance)
+}

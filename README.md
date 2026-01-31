@@ -2,7 +2,7 @@
 
 **Rust + PyO3 particle filter core** — a compiled, zero-copy, GIL-free sequential Monte Carlo library for regime-switching state estimation.
 
-All 9 numerical core functions ported to safe Rust. Parallel prediction via rayon. Bit-exact parity with the Python originals (verified to `1e-10` tolerance). One-line import swap to activate.
+All 19 numerical core functions ported to safe Rust. Parallel prediction via rayon. Bit-exact parity with the Python originals (verified to `1e-10` tolerance). One-line import swap to activate.
 
 ---
 
@@ -79,6 +79,10 @@ Quick reference for the key ideas behind every function in this library.
 | **Kalman filter** | A closed-form optimal estimator for linear-Gaussian systems. Here used as a 2D `[level, slope]` smoother that complements the particle filter's nonlinear estimation. | `kalman_update` |
 | **VWAP** | Volume-Weighted Average Price — the "fair value" consensus weighted by traded volume. The σ-bands mark statistical extremes around it. | `calculate_vwap_bands` |
 | **Momentum score** | A bounded `[-1, +1]` measure of recent directional tendency. Uses `tanh` compression so the signal saturates gracefully instead of exploding. | `calculate_momentum_score` |
+| **Hurst exponent** | A measure of long-term memory via R/S analysis. H > 0.5 = trending, H < 0.5 = mean-reverting, H = 0.5 = random walk. | `hurst_exponent` |
+| **CUSUM** | Page's Cumulative Sum test — detects structural breaks (mean-shift reversals) in a time series by accumulating deviations from a reference mean. | `cusum_test` |
+| **Kurtosis** | Excess kurtosis of recent values. Positive = fat tails (widen bands), negative = thin tails (tighten bands), zero = normal. | `rolling_kurtosis` |
+| **Volatility compression** | Ratio of short-term to long-term volatility. Ratio < 0.5 = compressed (pause entries), ratio > 1.5 = expanding (breakout). | `volatility_compression` |
 
 ---
 
@@ -143,6 +147,14 @@ The 3-regime model (RANGE / TREND / PANIC) maps naturally to any domain where th
               │  │ kalman    │   │ vwap + bands  │  │
               │  │ 2D update │   │ momentum score│  │
               │  └───────────┘   └───────────────┘  │
+              │  ┌───────────┐   ┌───────────────┐  │
+              │  │ hurst     │   │ cusum         │  │
+              │  │ R/S expon │   │ break detect  │  │
+              │  └───────────┘   └───────────────┘  │
+              │  ┌───────────┐   ┌───────────────┐  │
+              │  │ volatility│   │ kurtosis +    │  │
+              │  │ compress  │   │ adaptive σ    │  │
+              │  └───────────┘   └───────────────┘  │
               └─────────────────────────────────────┘
                         │ PyO3 + numpy FFI │
                         ▼                  ▼
@@ -193,7 +205,7 @@ Each tick of market data triggers this sequence:
       Trade Signal
 ```
 
-Auxiliary functions `kalman_update`, `calculate_vwap_bands`, and `calculate_momentum_score` provide supplementary signal-processing capabilities that can run alongside the core filter loop.
+Auxiliary functions provide supplementary signal-processing capabilities that run alongside the core filter loop: `kalman_update` (level/slope smoothing), `calculate_vwap_bands`, `calculate_momentum_score`, `hurst_exponent` (regime validation), `cusum_test` (reversal detection), `volatility_compression` (range squeeze), `rolling_kurtosis` + `adaptive_vwap_sigma` (fat-tail adaptation), `slope_confidence_interval` / `is_slope_significant` / `kalman_slope_acceleration` (trend significance), `ess_and_uncertainty_margin` (dominance test), and `particle_price_variance` (spread estimation).
 
 ---
 
@@ -222,15 +234,15 @@ Particle Filter Rust vs Python Parity Tests
 ==================================================
   predict_particles: PASS
   update_weights: PASS
-  transition_regimes: PASS
-  systematic_resample: PASS
-  effective_sample_size: PASS
-  estimate: PASS
-  kalman_update: PASS
-  calculate_vwap_bands: PASS
   ...
+--------------------------------------------------
+New functions:
+  particle_price_variance: PASS
+  ess_and_uncertainty_margin: PASS
+  ...
+  hurst_exponent: PASS
 ==================================================
-ALL 9 FUNCTIONS PASS PARITY TESTS
+ALL 19 FUNCTIONS PASS PARITY TESTS
 ```
 
 ---
@@ -239,15 +251,29 @@ ALL 9 FUNCTIONS PASS PARITY TESTS
 
 ```python
 from particle_filter_rs import (
+    # Core particle filter
     predict_particles,
     update_weights,
     transition_regimes,
     systematic_resample,
     effective_sample_size,
     estimate,
+    particle_price_variance,
+    ess_and_uncertainty_margin,
+    # Kalman filter
     kalman_update,
+    slope_confidence_interval,
+    is_slope_significant,
+    kalman_slope_acceleration,
+    # Signal processing
     calculate_vwap_bands,
+    rolling_kurtosis,
+    adaptive_vwap_sigma,
     calculate_momentum_score,
+    # Regime analysis
+    cusum_test,
+    volatility_compression,
+    hurst_exponent,
 )
 ```
 
@@ -466,6 +492,198 @@ Returns `0.0` if `len(prices) < window` or `len(prices) < 3`.
 
 ---
 
+### Extended Core
+
+#### `particle_price_variance`
+
+Weighted variance of particle log-prices — measures spread of the particle cloud.
+
+```python
+particle_price_variance(
+    particles_pos: np.ndarray,  # (N,) float64 — log-prices
+    weights: np.ndarray,        # (N,) float64 — particle weights
+    mean_price: float,          # weighted mean log-price
+) -> float                      # weighted variance
+```
+
+**Formula:** `Var = Σ wᵢ · (xᵢ - μ)²`
+
+---
+
+#### `ess_and_uncertainty_margin`
+
+Combined ESS ratio, statistical uncertainty margin, and trend dominance test.
+
+```python
+ess_and_uncertainty_margin(
+    weights: np.ndarray,  # (N,) float64
+    p_trend: float,       # P(TREND) regime probability
+    p_range: float,       # P(RANGE) regime probability
+    p_panic: float,       # P(PANIC) regime probability
+) -> tuple[
+    float,  # ess_ratio ∈ [0, 1]  (ESS / N)
+    float,  # uncertainty_margin   (2 × SE for 95% CI)
+    bool,   # is_dominant          (trend significantly exceeds others)
+]
+```
+
+**Dominance test:** `p_trend > p_range + margin AND p_trend > p_panic + margin AND p_trend > 0.45`
+
+---
+
+### Kalman Slope Analysis
+
+#### `slope_confidence_interval`
+
+95% confidence interval for the Kalman slope estimate.
+
+```python
+slope_confidence_interval(
+    kf_slope: float,   # slope estimate
+    kf_p_11: float,    # P[1,1] slope variance
+) -> tuple[
+    float,  # slope (unchanged)
+    float,  # sigma (√variance, clamped ≥ √1e-12)
+    float,  # ci_95 = 1.96 × sigma
+]
+```
+
+---
+
+#### `is_slope_significant`
+
+Test if Kalman slope is statistically significant at the 95% confidence level.
+
+```python
+is_slope_significant(
+    kf_slope: float,   # slope estimate
+    kf_p_11: float,    # P[1,1] slope variance
+    direction: int,    # 0=bidirectional, 1=positive only, -1=negative only
+) -> bool              # True if |slope| > 1.96σ (in specified direction)
+```
+
+---
+
+#### `kalman_slope_acceleration`
+
+Detect acceleration (second derivative) of the Kalman slope for early trend entry.
+
+```python
+kalman_slope_acceleration(
+    slopes_history: np.ndarray,  # (M,) float64 — historical slope values
+    lookback: int = 10,          # window of recent slopes to analyze
+) -> tuple[
+    float,  # acceleration (recent_avg_change - older_avg_change)
+    bool,   # is_accelerating (|acceleration| > 2σ AND > 1e-8)
+]
+```
+
+Returns `(0.0, False)` if `len(slopes_history) < lookback` or `lookback < 4`.
+
+---
+
+### Statistical Tests
+
+#### `cusum_test`
+
+Page's CUSUM test for structural break (mean-shift) detection.
+
+```python
+cusum_test(
+    values: np.ndarray,           # (M,) float64 — slopes, returns, etc.
+    threshold_h: float = 0.5,     # slack parameter (in σ units)
+    min_samples: int = 10,        # minimum samples before testing
+) -> tuple[
+    bool,   # is_reversal
+    int,    # direction: 1=positive, -1=negative, 0=none
+    float,  # cusum_value (max absolute CUSUM at alarm or end)
+]
+```
+
+**Algorithm:** Reference mean from first half. CUSUM+ detects upward shift, CUSUM- detects downward shift. Alarm when |S| > 5σ.
+
+---
+
+#### `rolling_kurtosis`
+
+Excess kurtosis of recent values for fat-tail detection.
+
+```python
+rolling_kurtosis(
+    values: np.ndarray,     # (M,) float64
+    window: int = 50,       # rolling window size
+) -> float                  # excess kurtosis, clamped to [-2, 10]
+```
+
+**Formula:** `Kurt = E[(x-μ)⁴] / σ⁴ - 3` — zero for normal, positive for fat tails, negative for thin tails.
+
+Returns `0.0` if insufficient data.
+
+---
+
+#### `adaptive_vwap_sigma`
+
+Compute adaptive VWAP band width based on kurtosis.
+
+```python
+adaptive_vwap_sigma(
+    kurtosis: float,            # from rolling_kurtosis()
+    base_sigma: float = 1.5,    # default sigma (normal distribution)
+    min_sigma: float = 1.2,     # floor
+    max_sigma: float = 2.5,     # ceiling
+) -> float                      # adaptive sigma, clamped to [min, max]
+```
+
+**Formula:** `σ_adaptive = base + 0.1 × kurtosis` — fat tails widen bands, thin tails tighten them.
+
+---
+
+#### `volatility_compression`
+
+Detect volatility compression (range squeeze) by comparing short-term vs long-term volatility.
+
+```python
+volatility_compression(
+    prices: np.ndarray,          # (M,) float64 — log-prices
+    short_window: int = 10,      # recent volatility window
+    long_window: int = 50,       # historical volatility window
+) -> tuple[
+    float,  # compression_ratio (σ_short / σ_long)
+    bool,   # is_compressed (ratio < 0.5)
+    bool,   # is_expanding  (ratio > 1.5)
+]
+```
+
+Returns `(1.0, False, False)` if insufficient data.
+
+---
+
+#### `hurst_exponent`
+
+Hurst exponent via Rescaled Range (R/S) analysis — measures long-term memory in a time series.
+
+```python
+hurst_exponent(
+    prices: np.ndarray,          # (M,) float64 — log-prices
+    min_window: int = 10,        # minimum R/S window
+    max_window: int = 50,        # maximum R/S window
+) -> tuple[
+    float,  # H ∈ [0, 1] — Hurst exponent
+    float,  # uncertainty (regression residual std error)
+]
+```
+
+**Interpretation:**
+| H | Regime | Meaning |
+|---|---|---|
+| H > 0.5 | Trending | Positive autocorrelation — momentum persists |
+| H = 0.5 | Random walk | No memory — pure noise |
+| H < 0.5 | Mean-reverting | Negative autocorrelation — moves tend to reverse |
+
+Returns `(0.5, 0.5)` if `len(prices) < max_window` or fewer than 3 valid windows.
+
+---
+
 ## Project Structure
 
 ```
@@ -474,17 +692,20 @@ particle-filter-rs/
 ├── pyproject.toml           # maturin build configuration
 ├── README.md
 ├── src/
-│   ├── lib.rs              # PyO3 module — registers all 9 functions
+│   ├── lib.rs              # PyO3 module — registers all 19 functions
 │   ├── predict.rs          # predict_particles     (parallel, rayon)
 │   ├── update.rs           # update_weights        (Gaussian likelihood)
 │   ├── regime.rs           # transition_regimes    (Markov chain)
-│   ├── resample.rs         # systematic_resample + effective_sample_size
-│   ├── estimate.rs         # estimate              (weighted aggregation)
-│   ├── kalman.rs           # kalman_update         (2D state-space)
-│   ├── vwap.rs             # calculate_vwap_bands  (volume-weighted)
-│   └── momentum.rs         # calculate_momentum_score (tanh-normalized)
+│   ├── resample.rs         # systematic_resample + effective_sample_size + ess_and_uncertainty_margin
+│   ├── estimate.rs         # estimate + particle_price_variance
+│   ├── kalman.rs           # kalman_update + slope_confidence_interval + is_slope_significant + kalman_slope_acceleration
+│   ├── vwap.rs             # calculate_vwap_bands + rolling_kurtosis + adaptive_vwap_sigma
+│   ├── momentum.rs         # calculate_momentum_score (tanh-normalized)
+│   ├── cusum.rs            # cusum_test            (structural break detection)
+│   ├── volatility.rs       # volatility_compression (range squeeze)
+│   └── hurst.rs            # hurst_exponent        (R/S analysis)
 └── tests/
-    └── test_parity.py      # Rust vs Python — 12 test cases, atol=1e-10
+    └── test_parity.py      # Rust vs Python — 34 test assertions, atol=1e-10
 ```
 
 ---
@@ -518,7 +739,7 @@ Build tool: **maturin** 1.11+ (compiles Rust → `.so` → installs into virtual
 
 ## Verification
 
-The test suite (`tests/test_parity.py`) runs **12 test cases** across all 9 functions:
+The test suite (`tests/test_parity.py`) runs **34 test assertions** across all 19 functions:
 
 | Test | What it validates |
 |---|---|
@@ -529,11 +750,18 @@ The test suite (`tests/test_parity.py`) runs **12 test cases** across all 9 func
 | `test_effective_sample_size` | ESS formula accuracy |
 | `test_estimate` | Weighted mean + regime probability vector |
 | `test_kalman_update` | Predict-update cycle + covariance symmetry |
-| `test_vwap_bands` | VWAP + bands at default σ=1.5 |
-| `test_vwap_bands` (σ=2.0) | Custom band width multiplier |
-| `test_vwap_bands` (short data) | Returns NaN gracefully |
-| `test_momentum_score` | Tanh-normalized momentum value |
-| `test_momentum_score` (short) | Returns 0.0 for insufficient data |
+| `test_vwap_bands` | VWAP + bands at default σ=1.5, σ=2.0, and short data |
+| `test_momentum_score` | Tanh-normalized momentum + insufficient data |
+| `test_particle_price_variance` | Weighted variance of particle cloud |
+| `test_ess_and_uncertainty_margin` | ESS ratio + dominance test (dominant + non-dominant) |
+| `test_slope_confidence_interval` | CI calculation + negative variance guard |
+| `test_is_slope_significant` | All direction × slope sign combinations |
+| `test_kalman_slope_acceleration` | Accelerating, flat, and insufficient data cases |
+| `test_cusum_test` | Stable (no alarm), mean-shift (alarm), and short data |
+| `test_rolling_kurtosis` | Normal data, insufficient data, default window |
+| `test_adaptive_vwap_sigma` | Fat tails, thin tails, clamping, custom params |
+| `test_volatility_compression` | Normal, insufficient data, custom windows |
+| `test_hurst_exponent` | Random walk, insufficient data, custom windows |
 
 All tests use `seed=42`, `N=500` particles, `atol=1e-10`.
 

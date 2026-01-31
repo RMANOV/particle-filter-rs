@@ -64,3 +64,34 @@ pub fn effective_sample_size(weights: PyReadonlyArray1<'_, f64>) -> PyResult<f64
     let sum_sq: f64 = w.iter().map(|x| x * x).sum();
     Ok(1.0 / (sum_sq + 1e-12))
 }
+
+/// Compute ESS ratio, uncertainty margin, and trend dominance test.
+///
+/// Returns: (ess_ratio, uncertainty_margin, is_dominant)
+#[pyfunction]
+pub fn ess_and_uncertainty_margin(
+    weights: PyReadonlyArray1<'_, f64>,
+    p_trend: f64,
+    p_range: f64,
+    p_panic: f64,
+) -> PyResult<(f64, f64, bool)> {
+    let w = weights.as_array();
+    let n = w.len();
+
+    let mut sum_sq = 0.0f64;
+    for i in 0..n {
+        sum_sq += w[i] * w[i];
+    }
+
+    let ess = 1.0 / (sum_sq + 1e-12);
+    let ess_ratio = (ess / n as f64).clamp(0.0, 1.0);
+
+    // Statistical uncertainty margin (2*SE for 95% CI)
+    let uncertainty_margin = 2.0 * (0.25 / f64::max(ess, 100.0)).sqrt();
+
+    let is_dominant = p_trend > p_range + uncertainty_margin
+        && p_trend > p_panic + uncertainty_margin
+        && p_trend > 0.45;
+
+    Ok((ess_ratio, uncertainty_margin, is_dominant))
+}
