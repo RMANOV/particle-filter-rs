@@ -6,6 +6,45 @@ All 9 numerical core functions ported to safe Rust. Parallel prediction via rayo
 
 ---
 
+## A Brief History of the Particle Filter
+
+The particle filter has a lineage stretching back six decades — from Cold War ballistics to modern autonomous vehicles. Understanding where it came from illuminates why the algorithm looks the way it does.
+
+**1960 — The Kalman filter**
+Rudolf Kalman publishes *"A New Approach to Linear Filtering and Prediction Problems"*. For linear systems with Gaussian noise, his filter is provably optimal — it yields exact state estimates with minimal computation. It becomes the backbone of Apollo navigation, GPS, and every autopilot on earth. But it has a hard constraint: **linearity**. Real systems are rarely linear.
+
+**1969 — First Monte Carlo attempt**
+Handschin and Mayne propose using random samples (Monte Carlo simulation) to approximate the state distribution for nonlinear systems. The idea is sound, but 1960s hardware cannot sustain it — a few hundred samples per update is all a mainframe can manage, and without resampling the estimates degenerate catastrophically as particles drift away from the true state.
+
+**1993 — The bootstrap particle filter**
+Neil Gordon, David Salmond, and Adrian Smith at the UK Defence Evaluation and Research Agency (DERA) publish *"Novel approach to nonlinear/non-Gaussian Bayesian state estimation"*. The breakthrough: **resampling**. After each observation, clone the particles that explain the data well and discard the ones that don't. This simple operation prevents degeneracy and makes the algorithm practical. The original application: **tracking military aircraft and missiles** from noisy radar returns — targets that maneuver unpredictably, exactly the kind of nonlinear, multi-modal problem the Kalman filter cannot handle.
+
+> The `systematic_resample` function in this library implements the same algorithmic idea from 1993 — the two-pointer O(N) variant introduced by Carpenter, Clifford, and Fearnhead in 1999.
+
+**1996 — The name "particle filter"**
+Pierre Del Moral coins the term *particle filter* and develops the rigorous mathematical framework (Feynman-Kac formulations) that proves convergence guarantees. Independently, Genshiro Kitagawa develops a closely related "Monte Carlo filter" in the statistics community. The two research streams converge.
+
+**1998 — Computer vision discovers particles**
+Michael Isard and Andrew Blake publish the CONDENSATION algorithm (Conditional Density Propagation), bringing particle filters into visual object tracking. Suddenly a webcam can follow a hand, a face, or a bouncing ball through clutter and occlusion — problems where Kalman filters fail because the target can be in multiple plausible locations simultaneously.
+
+**2000s — Explosion of applications**
+Particle filters spread into robotics (SLAM — simultaneous localization and mapping), finance (stochastic volatility models), speech recognition, bioinformatics, weather prediction, and ocean current estimation. The regime-switching variant — where particles carry both continuous state and a discrete mode label — emerges as the standard approach for systems that switch between qualitatively different behaviors.
+
+**2010s–present — Hardware catches up**
+GPUs and multi-core CPUs make it feasible to run tens of thousands of particles in real time. The algorithm's embarrassingly parallel structure (each particle is independent during prediction) maps naturally to SIMD, thread pools, and GPU warps. Libraries like this one exploit that structure via rayon's work-stealing scheduler.
+
+### The core insight, then and now
+
+A particle filter maintains a **population of hypotheses** about the hidden state of a system. Each hypothesis (particle) is a concrete guess — a point in state space — weighted by how well it explains the observed data. The population evolves through three operations that have remained essentially unchanged since 1993:
+
+1. **Predict** — propagate each particle forward through the dynamics model
+2. **Update** — re-weight each particle by the likelihood of the new observation
+3. **Resample** — clone the fit, cull the unfit
+
+This library implements exactly that loop, plus regime transitions (Markov switching between dynamics models), a companion Kalman smoother, and auxiliary signal processors — all in compiled Rust with zero-copy NumPy interop.
+
+---
+
 ## Why Rust + Python
 
 Python excels at prototyping, data wrangling, and orchestration. Rust excels at the thing Python cannot do: sustained, predictable, low-latency number crunching without a garbage collector. Combining them via PyO3 gives you both — and specifically for this library:
