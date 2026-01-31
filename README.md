@@ -443,3 +443,8 @@ maturin build --release
 pip install target/wheels/particle_filter_rs-*.whl
 ```
 
+---
+
+## Topics
+
+`particle-filter` `sequential-monte-carlo` `bayesian-inference` `regime-switching` `state-estimation` `kalman-filter` `markov-chain` `signal-processing` `time-series` `rust` `pyo3` `numpy` `rayon` `high-performance-computing` `quantitative-finance` `stochastic-filtering`
