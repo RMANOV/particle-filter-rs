@@ -2,6 +2,11 @@
 
 [![CI](https://github.com/RMANOV/particle-filter-rs/actions/workflows/CI.yml/badge.svg)](https://github.com/RMANOV/particle-filter-rs/actions/workflows/CI.yml)
 
+## Technical deep-dives
+
+- **Medium:** [Regime-Switching Particle Filter for Python](https://medium.com/@r.manov/regime-switching-particle-filter-for-python-41f81f598e3c)
+- **Dev.to:** [Building a regime-switching particle filter in Rust — from Kalman 1960 to rayon-parallelized Monte Carlo](https://dev.to/ruslan_manov/building-a-regime-switching-particle-filter-in-rust-from-kalman-1960-to-rayon-parallelized-monte-43l7)
+
 **Rust + PyO3 particle filter core** — a compiled, zero-copy, GIL-free sequential Monte Carlo library for regime-switching state estimation.
 
 All 19 numerical core functions ported to safe Rust. Parallel prediction via rayon. Bit-exact parity with the Python originals (verified to `1e-10` tolerance). One-line import swap to activate.
