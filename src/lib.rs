@@ -14,7 +14,7 @@ mod vwap;
 
 /// Rust-accelerated particle filter core functions.
 /// Regime-switching sequential Monte Carlo with PyO3 bindings.
-#[pymodule]
+#[pymodule(gil_used = true)]
 fn particle_filter_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(predict::predict_particles, m)?)?;
     m.add_function(wrap_pyfunction!(update::update_weights, m)?)?;
