@@ -16,8 +16,7 @@ np.random.seed(42)
 # ─── Reference implementations (pure Python, matching Numba originals) ───
 
 
-def ref_predict_particles(particles, regimes, noise_pos, noise_vel,
-                          imbalance, dt, vel_gain, rand_pos, rand_vel):
+def ref_predict_particles(particles, regimes, noise_pos, noise_vel, imbalance, dt, vel_gain, rand_pos, rand_vel):
     out = particles.copy()
     n = out.shape[0]
     dt_sqrt = max(dt, 1e-8) ** 0.5
@@ -39,8 +38,7 @@ def ref_predict_particles(particles, regimes, noise_pos, noise_vel,
     return out
 
 
-def ref_update_weights(particles, regimes, weights, meas, mnp, mnv,
-                       imbalance, vel_gain):
+def ref_update_weights(particles, regimes, weights, meas, mnp, mnv, imbalance, vel_gain):
     w = weights.copy()
     target = vel_gain * imbalance
     for i in range(len(w)):
@@ -92,7 +90,7 @@ def ref_systematic_resample(weights, particles, regimes, offset):
 
 
 def ref_effective_sample_size(weights):
-    return 1.0 / (np.sum(weights ** 2) + 1e-12)
+    return 1.0 / (np.sum(weights**2) + 1e-12)
 
 
 def ref_estimate(particles, weights, regimes):
@@ -140,7 +138,7 @@ def ref_vwap_bands(prices, volumes, window, sigma=1.5):
         return np.nan, np.nan, np.nan
     vwap = np.sum(prices[s:] * volumes[s:]) / vs
     var = np.sum(volumes[s:] * (prices[s:] - vwap) ** 2) / vs
-    std = var ** 0.5
+    std = var**0.5
     return vwap, vwap + sigma * std, vwap - sigma * std
 
 
@@ -174,11 +172,7 @@ def ref_ess_and_uncertainty_margin(weights, p_trend, p_range, p_panic):
     ess = 1.0 / (sum_sq + 1e-12)
     ess_ratio = min(max(ess / N, 0.0), 1.0)
     uncertainty_margin = 2.0 * np.sqrt(0.25 / max(ess, 100.0))
-    is_dominant = (
-        p_trend > p_range + uncertainty_margin and
-        p_trend > p_panic + uncertainty_margin and
-        p_trend > 0.45
-    )
+    is_dominant = p_trend > p_range + uncertainty_margin and p_trend > p_panic + uncertainty_margin and p_trend > 0.45
     return (ess_ratio, uncertainty_margin, is_dominant)
 
 
@@ -225,7 +219,7 @@ def ref_kalman_slope_acceleration(slopes_history, lookback=10):
     mean_change = 0.0
     for i in range(lookback - 1):
         mean_change += slope_changes[i]
-    mean_change /= (lookback - 1)
+    mean_change /= lookback - 1
     var_change = 0.0
     for i in range(lookback - 1):
         diff = slope_changes[i] - mean_change
@@ -436,12 +430,11 @@ def test_predict_particles():
     rand_pos = np.random.randn(N)
     rand_vel = np.random.randn(N)
 
-    expected = ref_predict_particles(particles, regimes, noise_pos, noise_vel,
-                                     imbalance, dt, vel_gain, rand_pos, rand_vel)
-    result = pf.predict_particles(particles, regimes, noise_pos, noise_vel,
-                                  imbalance, dt, vel_gain, rand_pos, rand_vel)
-    assert np.allclose(result, expected, atol=ATOL), \
-        f"predict_particles max diff: {np.max(np.abs(result - expected))}"
+    expected = ref_predict_particles(
+        particles, regimes, noise_pos, noise_vel, imbalance, dt, vel_gain, rand_pos, rand_vel
+    )
+    result = pf.predict_particles(particles, regimes, noise_pos, noise_vel, imbalance, dt, vel_gain, rand_pos, rand_vel)
+    assert np.allclose(result, expected, atol=ATOL), f"predict_particles max diff: {np.max(np.abs(result - expected))}"
     print("  predict_particles: PASS")
 
 
@@ -455,20 +448,15 @@ def test_update_weights():
     imbalance = 0.15
     vel_gain = 0.5
 
-    expected = ref_update_weights(particles, regimes, weights, meas, mnp, mnv,
-                                  imbalance, vel_gain)
-    result = pf.update_weights(particles, regimes, weights, meas, mnp, mnv,
-                               imbalance, vel_gain)
-    assert np.allclose(result, expected, atol=ATOL), \
-        f"update_weights max diff: {np.max(np.abs(result - expected))}"
+    expected = ref_update_weights(particles, regimes, weights, meas, mnp, mnv, imbalance, vel_gain)
+    result = pf.update_weights(particles, regimes, weights, meas, mnp, mnv, imbalance, vel_gain)
+    assert np.allclose(result, expected, atol=ATOL), f"update_weights max diff: {np.max(np.abs(result - expected))}"
     print("  update_weights: PASS")
 
 
 def test_transition_regimes():
     regimes = np.random.randint(0, 3, N).astype(np.int64)
-    tm = np.array([[0.8, 0.15, 0.05],
-                   [0.1, 0.8, 0.1],
-                   [0.2, 0.3, 0.5]])
+    tm = np.array([[0.8, 0.15, 0.05], [0.1, 0.8, 0.1], [0.2, 0.3, 0.5]])
     ru = np.random.rand(N)
 
     expected = ref_transition_regimes(regimes, tm, ru)
@@ -486,8 +474,7 @@ def test_systematic_resample():
     ep, er, ew = ref_systematic_resample(weights, particles, regimes, offset)
     rp, rr, rw = pf.systematic_resample(weights, particles, regimes, offset)
 
-    assert np.allclose(rp, ep, atol=ATOL), \
-        f"systematic_resample particles max diff: {np.max(np.abs(rp - ep))}"
+    assert np.allclose(rp, ep, atol=ATOL), f"systematic_resample particles max diff: {np.max(np.abs(rp - ep))}"
     assert np.array_equal(rr, er), "systematic_resample regimes mismatch"
     assert np.allclose(rw, ew, atol=ATOL), "systematic_resample weights mismatch"
     print("  systematic_resample: PASS")
@@ -497,8 +484,7 @@ def test_effective_sample_size():
     weights = np.random.dirichlet(np.ones(N))
     expected = ref_effective_sample_size(weights)
     result = pf.effective_sample_size(weights)
-    assert abs(result - expected) < ATOL, \
-        f"effective_sample_size diff: {abs(result - expected)}"
+    assert abs(result - expected) < ATOL, f"effective_sample_size diff: {abs(result - expected)}"
     print("  effective_sample_size: PASS")
 
 
@@ -531,8 +517,7 @@ def test_kalman_update():
 
     assert abs(rl - el) < ATOL, f"kalman level diff: {abs(rl - el)}"
     assert abs(rs - es) < ATOL, f"kalman slope diff: {abs(rs - es)}"
-    assert np.allclose(rP, eP, atol=ATOL), \
-        f"kalman P max diff: {np.max(np.abs(rP - eP))}"
+    assert np.allclose(rP, eP, atol=ATOL), f"kalman P max diff: {np.max(np.abs(rP - eP))}"
     print("  kalman_update: PASS")
 
 
@@ -570,8 +555,7 @@ def test_momentum_score():
     expected = ref_momentum_score(prices, window)
     result = pf.calculate_momentum_score(prices, window)
 
-    assert abs(result - expected) < ATOL, \
-        f"momentum_score diff: {abs(result - expected)}"
+    assert abs(result - expected) < ATOL, f"momentum_score diff: {abs(result - expected)}"
     print("  calculate_momentum_score: PASS")
 
     # Test insufficient data
@@ -586,8 +570,7 @@ def test_particle_price_variance():
 
     expected = ref_particle_price_variance(particles_pos, weights, mean_price)
     result = pf.particle_price_variance(particles_pos, weights, mean_price)
-    assert abs(result - expected) < ATOL, \
-        f"particle_price_variance diff: {abs(result - expected)}"
+    assert abs(result - expected) < ATOL, f"particle_price_variance diff: {abs(result - expected)}"
     print("  particle_price_variance: PASS")
 
 
@@ -631,20 +614,17 @@ def test_slope_confidence_interval():
 
 def test_is_slope_significant():
     # Significant positive slope
-    assert pf.is_slope_significant(0.1, 0.001, 0) == \
-        ref_is_slope_significant(0.1, 0.001, 0)
+    assert pf.is_slope_significant(0.1, 0.001, 0) == ref_is_slope_significant(0.1, 0.001, 0)
 
     # Not significant (slope too small)
-    assert pf.is_slope_significant(0.001, 0.01, 0) == \
-        ref_is_slope_significant(0.001, 0.01, 0)
+    assert pf.is_slope_significant(0.001, 0.01, 0) == ref_is_slope_significant(0.001, 0.01, 0)
 
     # Directional tests
     for direction in [-1, 0, 1]:
         for slope in [-0.1, -0.001, 0.001, 0.1]:
             r = pf.is_slope_significant(slope, 0.001, direction)
             e = ref_is_slope_significant(slope, 0.001, direction)
-            assert r == e, \
-                f"is_slope_significant mismatch: slope={slope}, dir={direction}, rust={r}, py={e}"
+            assert r == e, f"is_slope_significant mismatch: slope={slope}, dir={direction}, rust={r}, py={e}"
     print("  is_slope_significant: PASS")
 
 
@@ -702,8 +682,7 @@ def test_rolling_kurtosis():
     data = np.random.randn(100)
     expected = ref_rolling_kurtosis(data, 50)
     result = pf.rolling_kurtosis(data, 50)
-    assert abs(result - expected) < ATOL, \
-        f"rolling_kurtosis diff: {abs(result - expected)}"
+    assert abs(result - expected) < ATOL, f"rolling_kurtosis diff: {abs(result - expected)}"
     print("  rolling_kurtosis: PASS")
 
     # Insufficient data
@@ -743,8 +722,7 @@ def test_volatility_compression():
 
     e_ratio, e_comp, e_exp = ref_volatility_compression(prices)
     r_ratio, r_comp, r_exp = pf.volatility_compression(prices)
-    assert abs(r_ratio - e_ratio) < ATOL, \
-        f"compression_ratio diff: {abs(r_ratio - e_ratio)}"
+    assert abs(r_ratio - e_ratio) < ATOL, f"compression_ratio diff: {abs(r_ratio - e_ratio)}"
     assert r_comp == e_comp, f"is_compressed mismatch: rust={r_comp} py={e_comp}"
     assert r_exp == e_exp, f"is_expanding mismatch: rust={r_exp} py={e_exp}"
     print("  volatility_compression: PASS")
